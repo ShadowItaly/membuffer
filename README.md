@@ -1,4 +1,7 @@
+<a href="https://github.com/ShadowItaly/membuffer/actions" rel="nofollow">
 ![Build](https://github.com/ShadowItaly/membuffer/workflows/Build/badge.svg)
+</a>
+
 <a href="https://crates.io/crates/membuffer" rel="nofollow">
 ![value](https://img.shields.io/crates/v/membuffer)
 </a>

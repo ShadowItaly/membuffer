@@ -1,5 +1,9 @@
+#![feature(test)]
+extern crate test;
 use byteorder::{WriteBytesExt, ReadBytesExt, BigEndian};
 use crc32fast::Hasher;
+use serde::{Serialize,Deserialize};
+use serde_json;
 
 ///Refers to a position of a datafield
 pub struct Position {
@@ -80,6 +84,12 @@ impl<'a> MemBufferReader<'a> {
             return Err(MemBufferError::WrongFormat);
         }
         Ok(unsafe{ std::str::from_utf8_unchecked(&buffer[4..size]) })
+    }
+
+    pub fn get_serde_field<'de, T: Deserialize<'de>>(&'de self, name: &'a str) -> Result<T,serde_json::Error> {
+        let val = self.get_string_field(name).unwrap();
+        let des: T = serde_json::from_str(val)?;
+        Ok(des)
     }
 
     ///Tries to get the given field as string
@@ -182,6 +192,11 @@ impl MemBufferWriter {
     }
 
 
+    pub fn add_serde_entry<T: Serialize>(&mut self, name: &str, content: &T) {
+        self.add_string_entry(name,&serde_json::to_string(&content).unwrap());
+    }
+
+
     ///Adds a new string entry to the serializer
     pub fn add_string_entry(&mut self, name: &str, content: &str) {
         if let Some(_) = self.offsets.get(name) {
@@ -266,7 +281,38 @@ impl MemBufferWriter {
 #[cfg(test)]
 mod tests {
     use super::{MemBufferWriter,MemBufferReader,MemBufferError};
+    use serde::{Serialize,Deserialize};
+    use serde_json;
+
+    #[derive(Serialize,Deserialize)]
+    struct HeavyStruct {
+        vec: Vec<u64>,
+        name: String,
+        frequency: i32,
+        id: i32,
+    }
     
+    #[test]
+    fn check_serde_capability() {
+        let value = HeavyStruct {
+            vec: vec![100,20,1],
+            name: String::from("membuffer!"),
+            frequency: 10,
+            id: 200,
+        };
+        let mut writer = MemBufferWriter::new();
+        writer.add_serde_entry("heavy", &value);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        let struc: HeavyStruct = reader.get_serde_field("heavy").unwrap();
+
+        assert_eq!(struc.vec, vec![100,20,1]);
+        assert_eq!(struc.name,"membuffer!");
+        assert_eq!(struc.frequency,10);
+        assert_eq!(struc.id,200);
+    }
+
     #[test]
     fn check_serialize_string_deserialize() {
         let mut writer = MemBufferWriter::new();
@@ -328,5 +374,133 @@ mod tests {
 
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.get_i32_field("id").unwrap(), 123);
+    }
+    use test::Bencher;
+
+    #[bench]
+    fn benchmark_few_keys_payload_1mb(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(1_000_000);
+        for _ in 0..1_000_000 {
+            huge_string.push('a');
+        }
+        let mut writer = MemBufferWriter::new();
+        writer.add_string_entry("nice",&huge_string);
+        let result = writer.finalize();
+
+        b.iter(|| {
+            let reader = MemBufferReader::new(&result).unwrap();
+            let string = reader.get_string_field("nice").unwrap();
+            assert_eq!(string.len(), 1_000_000);
+        });
+    }
+
+    #[bench]
+    fn benchmark_few_keys_payload_10mb(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(10_000_000);
+        for _ in 0..10_000_000 {
+            huge_string.push('a');
+        }
+        let mut writer = MemBufferWriter::new();
+        writer.add_string_entry("nice",&huge_string);
+        let result = writer.finalize();
+
+        b.iter(|| {
+            let reader = MemBufferReader::new(&result).unwrap();
+            let string = reader.get_string_field("nice").unwrap();
+            assert_eq!(string.len(), 10_000_000);
+        });
+    }
+
+    #[bench]
+    fn benchmark_few_keys_payload_100mb(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(10_000_000);
+        for _ in 0..100_000_000 {
+            huge_string.push('a');
+        }
+        let mut writer = MemBufferWriter::new();
+        writer.add_string_entry("nice",&huge_string);
+        let result = writer.finalize();
+
+        b.iter(|| {
+            let reader = MemBufferReader::new(&result).unwrap();
+            let string = reader.get_string_field("nice").unwrap();
+            assert_eq!(string.len(), 100_000_000);
+        });
+    }
+
+    #[bench]
+    fn benchmark_few_keys_payload_1mb_times_3(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(10_000_000);
+        for _ in 0..1_000_000 {
+            huge_string.push('a');
+        }
+        let mut writer = MemBufferWriter::new();
+        writer.add_string_entry("one",&huge_string);
+        writer.add_string_entry("two",&huge_string);
+        writer.add_string_entry("three",&huge_string);
+        let result = writer.finalize();
+        assert!(result.len() > 3_000_000);
+
+        b.iter(|| {
+            let reader = MemBufferReader::new(&result).unwrap();
+            let string1 = reader.get_string_field("one").unwrap();
+            let string2 = reader.get_string_field("two").unwrap();
+            let string3 = reader.get_string_field("three").unwrap();
+            assert_eq!(string1.len(), 1_000_000);
+            assert_eq!(string2.len(), 1_000_000);
+            assert_eq!(string3.len(), 1_000_000);
+        });
+    }
+    #[bench]
+    fn benchmark_few_keys_payload_100mb_times_3(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(100_000_000);
+        for _ in 0..100_000_000 {
+            huge_string.push('a');
+        }
+        let mut writer = MemBufferWriter::new();
+        writer.add_string_entry("one",&huge_string);
+        writer.add_string_entry("two",&huge_string);
+        writer.add_string_entry("three",&huge_string);
+        let result = writer.finalize();
+        assert!(result.len() > 300_000_000);
+
+        b.iter(|| {
+            let reader = MemBufferReader::new(&result).unwrap();
+            let string1 = reader.get_string_field("one").unwrap();
+            let string2 = reader.get_string_field("two").unwrap();
+            let string3 = reader.get_string_field("three").unwrap();
+            assert_eq!(string1.len(), 100_000_000);
+            assert_eq!(string2.len(), 100_000_000);
+            assert_eq!(string3.len(), 100_000_000);
+        });
+    }
+
+    #[derive(Serialize,Deserialize)]
+    struct BenchSerde<'a> {
+        one: &'a str,
+        two: &'a str,
+        three: &'a str
+    }
+
+    #[bench]
+    fn benchmark_few_keys_payload_1mb_times_3_serde(b: &mut Bencher) {
+        let mut huge_string = String::with_capacity(1_000_000);
+        for _ in 0..1_000_000 {
+            huge_string.push('a');
+        }
+        let first = BenchSerde {
+            one: &huge_string,
+            two: &huge_string,
+            three: &huge_string
+        };
+
+        let string = serde_json::to_string(&first).unwrap();
+
+        b.iter(|| {
+            let reader: BenchSerde = serde_json::from_str(&string).unwrap();
+            assert_eq!(reader.one.len(), 1_000_000);
+            assert_eq!(reader.two.len(), 1_000_000);
+            assert_eq!(reader.three.len(), 1_000_000);
+        });
     }
 }
