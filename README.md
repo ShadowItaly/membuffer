@@ -4,6 +4,14 @@
 # membuffer
 A rust library for rapid deserialization of huge datasets with few keys. The library is meant to be used with mmaped files, almost any crate on crates.io which does serialization and deserialization needs to process the whole structure. This makes it unusable with large memory mapped files. For this purpose this library only scans the header to get the schema of the datastructure and leaves all other fields untouched unless it is specifically asked to fetch them.
 
+**This data structure is optimized for deserialization, it does not parse the fields and therefore is extremely fast when deserializing big strings**
+
+**Use cases:**
+- Handling very big strings
+- Saving huge datasets with few keys on disk
+- For MMAPed Data structures as the fields does not get read until requested and therefore won't cause Page Faults
+
+
 # Examples
 
 ```rust
@@ -25,6 +33,38 @@ fn main() {
 
   //Will return an error if the selected key could not be found or if the value types dont match
   assert_eq!(reader.get_string_field("short_key").unwrap(), "short_value");
+}
+```
+
+Example using serde in the data structure:
+```rust
+#[derive(Serialize,Deserialize)]
+struct HeavyStruct {
+    vec: Vec<u64>,
+    name: String,
+    frequency: i32,
+    id: i32,
+}
+
+#[test]
+fn check_serde_capability() {
+  let value = HeavyStruct {
+      vec: vec![100,20,1],
+      name: String::from("membuffer!"),
+      frequency: 10,
+      id: 200,
+  };
+  let mut writer = MemBufferWriter::new();
+  writer.add_serde_entry("heavy", &value);
+  let result = writer.finalize();
+
+  let reader = MemBufferReader::new(&result).unwrap();
+  let struc: HeavyStruct = reader.get_serde_field("heavy").unwrap();
+
+  assert_eq!(struc.vec, vec![100,20,1]);
+  assert_eq!(struc.name,"membuffer!");
+  assert_eq!(struc.frequency,10);
+  assert_eq!(struc.id,200);
 }
 ```
 
@@ -61,9 +101,9 @@ fn benchmark_few_keys_payload_1mb_times_3(b: &mut Bencher) {
 
 #[derive(Serialize,Deserialize)]
 struct BenchSerde<'a> {
-one: &'a str,
-       two: &'a str,
-       three: &'a str
+    one: &'a str,
+    two: &'a str,
+    three: &'a str
 }
 
 #[bench]
