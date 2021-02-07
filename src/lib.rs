@@ -1,5 +1,9 @@
 #![cfg_attr(feature = "bench", feature(test))]
+
+#[cfg_attr(feature = "bench")]
 extern crate test;
+
+
 use byteorder::{WriteBytesExt, ReadBytesExt, BigEndian};
 use crc32fast::Hasher;
 use serde::{Serialize,Deserialize};
