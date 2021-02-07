@@ -383,7 +383,7 @@ mod tests {
 #[cfg(feature="bench")]
 mod bench {
     use test::Bencher;
-    use super::{MemBufferWriter,MemBufferReader,MemBufferError};
+    use super::{MemBufferWriter,MemBufferReader};
     use serde::{Serialize,Deserialize};
     use serde_json;
 
