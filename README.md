@@ -27,3 +27,56 @@ fn main() {
   assert_eq!(reader.get_string_field("short_key").unwrap(), "short_value");
 }
 ```
+
+# Benchmark
+[Benchmark](assets/benchmark.png)
+Why is the library this fast? The benchmark consists of deserializing a data structure with different payload sizes either 1 MB, 10 MB or 100 MB. The membuffer load only the data structure layout and returns a slice to the strings instead of parsing the whole structure. This will help heaps if one uses MMAPed structures for example. As one can see in the benchmarks the speed of membuffer is only dependent on the number of keys and not of the size of the datastructure deserialized which is a good proof that the complexity of the deserialization does not depend on the size of the datastructure.
+
+**Benchmark code:**
+```rust
+#[bench]
+fn benchmark_few_keys_payload_1mb_times_3(b: &mut Bencher) {
+  let mut huge_string = String::with_capacity(10_000_000);
+  for _ in 0..1_000_000 {
+    huge_string.push('a');
+  }
+  let mut writer = MemBufferWriter::new();
+  writer.add_string_entry("one",&huge_string);
+  writer.add_string_entry("two",&huge_string);
+  writer.add_string_entry("three",&huge_string);
+  let result = writer.finalize();
+  assert!(result.len() > 3_000_000);
+
+  b.iter(|| {
+      let reader = MemBufferReader::new(&result).unwrap();
+      let string1 = reader.get_string_field("one").unwrap();
+      let string2 = reader.get_string_field("two").unwrap();
+      let string3 = reader.get_string_field("three").unwrap();
+      assert_eq!(string1.len(), 1_000_000);
+      assert_eq!(string2.len(), 1_000_000);
+      assert_eq!(string3.len(), 1_000_000);
+      });
+}
+
+#[bench]
+fn benchmark_few_keys_payload_1mb_times_3_serde(b: &mut Bencher) {
+  let mut huge_string = String::with_capacity(1_000_000);
+  for _ in 0..1_000_000 {
+    huge_string.push('a');
+  }
+  let first = BenchSerde {
+one: &huge_string,
+       two: &huge_string,
+       three: &huge_string
+  };
+
+  let string = serde_json::to_string(&first).unwrap();
+
+  b.iter(|| {
+      let reader: BenchSerde = serde_json::from_str(&string).unwrap();
+      assert_eq!(reader.one.len(), 1_000_000);
+      assert_eq!(reader.two.len(), 1_000_000);
+      assert_eq!(reader.three.len(), 1_000_000);
+      });
+}
+```
