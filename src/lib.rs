@@ -286,7 +286,6 @@ impl MemBufferWriter {
 mod tests {
     use super::{MemBufferWriter,MemBufferReader,MemBufferError};
     use serde::{Serialize,Deserialize};
-    use serde_json;
 
     #[derive(Serialize,Deserialize)]
     struct HeavyStruct {
@@ -379,7 +378,16 @@ mod tests {
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.get_i32_field("id").unwrap(), 123);
     }
+}
+
+#[cfg(feature="bench")]
+mod bench {
     use test::Bencher;
+    use super::{MemBufferWriter,MemBufferReader,MemBufferError};
+    use serde::{Serialize,Deserialize};
+    use serde_json;
+
+
 
     #[bench]
     fn benchmark_few_keys_payload_1mb(b: &mut Bencher) {
