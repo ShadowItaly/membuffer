@@ -265,7 +265,7 @@ impl MemBufferWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemBufferWriter,MemBufferReader,Type,MemBufferError};
+    use super::{MemBufferWriter,MemBufferReader,MemBufferError};
     
     #[test]
     fn check_serialize_string_deserialize() {
