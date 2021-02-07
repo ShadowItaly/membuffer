@@ -9,6 +9,33 @@ use crc32fast::Hasher;
 use serde::{Serialize,Deserialize};
 use serde_json;
 
+
+///!This crate will provide a extremely fast deserialization of dynamic data structures with big
+///fields. This is very MMAP friendly since it only parses the header and does not parse the fields
+///until requested.
+///**Easy example:**
+///```rust
+///use membuffer::{MemBufferWriter,MemBufferReader,MemBufferError};
+///
+///fn main() {
+///  //Creates a new empty MemBufferWriter
+///  let mut writer = MemBufferWriter::new();
+///  
+///  //Adds this as immutable field, no more changing after adding it
+///  writer.add_string_entry("short_key","short_value");
+///
+///  //Creates a Vec<u8> out of all the collected data
+///  let result = writer.finalize();
+///
+///  //Try to read the created vector. Will return an error if the CRC32 does not fit
+///  //or if the header is not terminated. Will panic if the memory is corrupted beyond recognition
+///  let reader = MemBufferReader::new(&result).unwrap();
+///
+///  //Will return an error if the selected key could not be found or if the value types dont match
+///  assert_eq!(reader.get_string_field("short_key").unwrap(), "short_value");
+///}
+///```
+
 ///Refers to a position of a datafield
 pub struct Position {
     pub offset: i32,
