@@ -29,7 +29,7 @@ fn main() {
 ```
 
 # Benchmark
-[Benchmark](assets/benchmark.png)
+![Benchmark](assets/benchmark.png)
 Why is the library this fast? The benchmark consists of deserializing a data structure with different payload sizes either 1 MB, 10 MB or 100 MB. The membuffer load only the data structure layout and returns a slice to the strings instead of parsing the whole structure. This will help heaps if one uses MMAPed structures for example. As one can see in the benchmarks the speed of membuffer is only dependent on the number of keys and not of the size of the datastructure deserialized which is a good proof that the complexity of the deserialization does not depend on the size of the datastructure.
 
 **Benchmark code:**
@@ -56,6 +56,14 @@ fn benchmark_few_keys_payload_1mb_times_3(b: &mut Bencher) {
       assert_eq!(string2.len(), 1_000_000);
       assert_eq!(string3.len(), 1_000_000);
       });
+}
+
+
+#[derive(Serialize,Deserialize)]
+struct BenchSerde<'a> {
+one: &'a str,
+       two: &'a str,
+       three: &'a str
 }
 
 #[bench]
