@@ -38,6 +38,9 @@ fn main() {
 
 Example using serde in the data structure:
 ```rust
+use membuffer::{MemBufferWriter,MemBufferReader,MemBufferError};
+use serde::{Serialize,Deserialize};
+
 #[derive(Serialize,Deserialize)]
 struct HeavyStruct {
     vec: Vec<u64>,
@@ -46,8 +49,7 @@ struct HeavyStruct {
     id: i32,
 }
 
-#[test]
-fn check_serde_capability() {
+fn main() {
   let value = HeavyStruct {
       vec: vec![100,20,1],
       name: String::from("membuffer!"),
