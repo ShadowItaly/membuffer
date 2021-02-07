@@ -1,4 +1,4 @@
-#![feature(test)]
+#![cfg_attr(feature = "bench", feature(test))]
 extern crate test;
 use byteorder::{WriteBytesExt, ReadBytesExt, BigEndian};
 use crc32fast::Hasher;
