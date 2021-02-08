@@ -8,11 +8,10 @@ jobs:
     steps:
       - name:                   Checkout repository
         uses:                   actions/checkout@v2
-      - name:                   Install coverage tool and run coverage
+      - name:                   Install coverage tool
         run: |
-          docker run --security-opt seccomp=unconfined -v "${PWD}:/volume" xd009642/tarpaulin
-
-      - name:                   Upload to codecov.io
-        uses:                   codecov/codecov-action@v1
-        with:
-          fail_ci_if_error:     true
+            cargo install cargo-tarpaulin
+      - name:                   Run coverage
+        run: |
+        cargo tarpaulin --out Xml
+        bash <(curl -s https://codecov.io/bash) -X gcov
