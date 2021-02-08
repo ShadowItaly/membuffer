@@ -22,7 +22,8 @@ use std::borrow::Cow;
 ///  let mut writer = MemBufferWriter::new();
 ///  
 ///  //Adds this as immutable field, no more changing after adding it
-///  writer.add_entry("Very long value");
+///  //The first entry is the key and must be a type that implements Into<i32>
+///  writer.add_entry(0,"Very long value");
 ///
 ///  //Creates a Vec<u8> out of all the collected data
 ///  let result = writer.finalize();
@@ -32,7 +33,7 @@ use std::borrow::Cow;
 ///  let reader = MemBufferReader::new(&result).unwrap();
 ///
 ///  //Will return an error if the selected key could not be found or if the value types dont match
-///  assert_eq!(reader.load_entry::<&str>(0).unwrap(), "Very long value");
+///  assert_eq!(reader.load_entry::<i32,&str>(0).unwrap(), "Very long value");
 ///}
 ///```
 
@@ -53,6 +54,7 @@ pub struct Position {
 /// MyOwnType1,
 /// MyOwnType2
 ///}
+///```
 #[derive(Debug)]
 pub enum MemBufferTypes {
     Text,
@@ -62,6 +64,13 @@ pub enum MemBufferTypes {
     MemBuffer,
     LastPreDefienedValue
 }
+
+impl Into<i32> for MemBufferTypes {
+    fn into(self) -> i32 {
+        self as i32
+    }
+}
+
 
 struct InternPosition {
     pub pos: Position,
@@ -75,7 +84,6 @@ struct InternPosition {
 pub enum MemBufferError {
     FieldUnknown(String),
     FieldTypeError(i32,i32),
-    Crc32Wrong,
     WrongFormat,
 }
 
@@ -84,9 +92,7 @@ impl<'a> std::fmt::Display for MemBufferError {
         match self {
             MemBufferError::FieldUnknown(x) => write!(f, "Memory buffer error: Field {} unknown",x),
             MemBufferError::FieldTypeError(x,y) => write!(f,"Memory buffer error: Field has type {} and not requested type {}",x.to_string(),y.to_string()),
-            MemBufferError::Crc32Wrong => write!(f,"Memory buffer error: The crc32 does not match with the given header, memory corrupted!"),
             MemBufferError::WrongFormat => write!(f,"Memory buffer error: Reached end of slice before end of header, memory seems to be corrupted")
-
         }
     }
 }
@@ -139,15 +145,15 @@ impl<'a> MemBufferDeserialize<'a,MemBufferReader<'a>> for MemBufferReader<'a> {
 ///use membuffer::{MemBufferWriter,MemBufferReader};
 ///
 ///let mut data = MemBufferWriter::new();
-///data.add_entry("Add some data to save to file or send over the network");
+///data.add_entry(0,"Add some data to save to file or send over the network");
 ///let data_vec = data.finalize();
 /////The reader is type sensitive
 ///let reader = MemBufferReader::new(&data_vec).unwrap();
 /////We load the first entry, try not to get this mixed up
-///assert_eq!(reader.load_entry::<&str>(0).unwrap(),"Add some data to save to file or send over the network");
+///assert_eq!(reader.load_entry::<i32,&str>(0).unwrap(),"Add some data to save to file or send over the network");
 ///```
 pub struct MemBufferReader<'a> {
-    offsets: Vec<InternPosition>,
+    offsets: std::collections::HashMap<i32,InternPosition>,
     data: &'a [u8]
 }
 
@@ -164,28 +170,29 @@ impl<'a> MemBufferReader<'a> {
     pub fn payload_len(&self) -> usize {
         self.data.len()
     }
-
-    pub fn load_entry<X: MemBufferDeserialize<'a,X> + MemBufferSerialize>(&self,index: usize) -> Result<X,MemBufferError> {
-        let expected_type = X::get_mem_buffer_type();
-        let is_type = self.offsets[index].variable_type;
-        if is_type != expected_type {
-            return Err(MemBufferError::FieldTypeError(is_type,expected_type));
+    
+    fn intern_load_entry<X: MemBufferDeserialize<'a,X>>(&self, key: i32, expected_type: i32) -> Result<X,MemBufferError> {
+        if let Some(entry) = self.offsets.get(&key) {
+            let is_type = entry.variable_type;
+            if is_type != expected_type {
+                return Err(MemBufferError::FieldTypeError(is_type,expected_type));
+            }
+            return X::from_mem_buffer(&entry.pos, self.data);
         }
-        X::from_mem_buffer(&self.offsets[index].pos, self.data)
+        Err(MemBufferError::FieldUnknown(format!("No such field {} in MemBufferDeserialize",key)))
     }
 
-    pub fn load_serde_entry<T: Deserialize<'a>>(&self,index: usize) -> Result<T,MemBufferError> {
-        let string = self.load_entry::<&str>(index)?;
+    pub fn load_entry<T: Into<i32>, X: MemBufferDeserialize<'a,X> + MemBufferSerialize>(&self,key: T) -> Result<X,MemBufferError> {
+        self.intern_load_entry(key.into(), X::get_mem_buffer_type())
+    }
+
+    pub fn load_serde_entry<X: Into<i32>, T: Deserialize<'a>>(&self,key: X) -> Result<T,MemBufferError> {
+        let string : &str = self.load_entry(key.into())?;
         Ok(serde_json::from_str(string).unwrap())
     }
 
-    pub fn load_recursive_reader(&self, index: usize) -> Result<MemBufferReader<'a>,MemBufferError> {
-        let expected_type = MemBufferWriter::get_mem_buffer_type();
-        let is_type = self.offsets[index].variable_type;
-        if is_type != expected_type {
-            return Err(MemBufferError::FieldTypeError(is_type,expected_type));
-        }
-        MemBufferReader::from_mem_buffer(&self.offsets[index].pos, self.data)
+    pub fn load_recursive_reader<X: Into<i32>>(&self, key: X) -> Result<MemBufferReader<'a>,MemBufferError> {
+        self.intern_load_entry(key.into(), MemBufferWriter::get_mem_buffer_type())
     }
 
 
@@ -193,32 +200,33 @@ impl<'a> MemBufferReader<'a> {
     ///borrowed from the memory slice the reader cannot outlive the memory it borrows from
     pub fn new(val: &'a [u8]) -> Result<MemBufferReader<'a>,MemBufferError> {
         let mut current_slice = &val[..];
-        let mut offsets: Vec<InternPosition> = Vec::new();
+        let mut offsets: std::collections::HashMap<i32,InternPosition> = std::collections::HashMap::with_capacity(100);
 
         if val.len() < 4 {
             return Err(MemBufferError::WrongFormat);
         }
 
         loop {
-            let positions_offset = MemBufferReader::deserialize_i32_from(current_slice);
-            if positions_offset == 0x7AFECAFE {
+            let position_offset = MemBufferReader::deserialize_i32_from(current_slice);
+            if position_offset == 0x7AFECAFE {
                 break;
             }
-            
-            if current_slice.len() < 16 {
+
+            if current_slice.len() < 20 {
                 return Err(MemBufferError::WrongFormat);
             }
 
-            let positions_length = MemBufferReader::deserialize_i32_from(&current_slice[4..]);
-            let positions_type = MemBufferReader::deserialize_i32_from(&current_slice[8..]);
+            let position_length = MemBufferReader::deserialize_i32_from(&current_slice[4..8]);
+            let position_type = MemBufferReader::deserialize_i32_from(&current_slice[8..12]);
+            let key = MemBufferReader::deserialize_i32_from(&current_slice[12..16]);
 
-            current_slice = &current_slice[12..];
-            offsets.push(InternPosition {
+            current_slice = &current_slice[16..];
+            offsets.insert(key, InternPosition{
                 pos: Position {
-                offset: positions_offset,
-                length: positions_length
+                    offset: position_offset,
+                    length: position_length,
                 },
-                variable_type: positions_type,
+                variable_type: position_type
             });
         }
 
@@ -238,7 +246,7 @@ impl<'a> std::fmt::Debug for MemBufferReader<'a> {
 
 ///The Writer class which sets up the schema and writes it into the memory when finished building
 pub struct MemBufferWriter {
-    offsets: Vec<InternPosition>,
+    offsets: std::collections::HashMap<i32,InternPosition>,
     data: Vec<u8>
 }
 
@@ -253,7 +261,7 @@ impl MemBufferSerialize for &str {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::Text as i32
+        MemBufferTypes::Text.into()
     }
 }
 
@@ -263,7 +271,7 @@ impl MemBufferSerialize for &String {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::Text as i32
+        MemBufferTypes::Text.into()
     }
 }
 
@@ -274,7 +282,7 @@ impl MemBufferSerialize for i32 {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::Integer32 as i32
+        MemBufferTypes::Integer32.into()
     }
 }
 
@@ -284,7 +292,7 @@ impl MemBufferSerialize for &[u8] {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::VectorU8 as i32
+        MemBufferTypes::VectorU8.into()
     }
 }
 
@@ -297,7 +305,7 @@ impl MemBufferSerialize for &[u64] {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::VectorU64 as i32
+        MemBufferTypes::VectorU64.into()
     }
 }
 
@@ -309,7 +317,7 @@ impl MemBufferSerialize for MemBufferWriter {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        MemBufferTypes::MemBuffer as i32
+        MemBufferTypes::MemBuffer.into()
     }
 }
 
@@ -317,7 +325,7 @@ impl MemBufferWriter {
     ///Creates a new empty memory format writer
     pub fn new() -> MemBufferWriter {
         MemBufferWriter {
-            offsets: Vec::new(),
+            offsets: std::collections::HashMap::new(),
             data: Vec::new()
         }
     }
@@ -327,27 +335,28 @@ impl MemBufferWriter {
         to.write_i32::<NativeEndian>(val).unwrap();
     }
 
-    pub fn add_entry<T: MemBufferSerialize>(&mut self, val: T) {
+    pub fn add_entry<X: Into<i32>, T: MemBufferSerialize>(&mut self, key: X, val: T) {
         let mut position = Position {offset: self.data.len() as i32, length: 0};
         let slice = val.to_mem_buffer(&mut position);
         position.length = slice.len() as i32;
-        self.offsets.push(InternPosition{pos:position,variable_type: T::get_mem_buffer_type()});
+        self.offsets.insert(key.into(), InternPosition{pos:position,variable_type: T::get_mem_buffer_type()});
         self.data.extend_from_slice(&slice);
     }
 
-    pub fn add_serde_entry<T: Serialize>(&mut self, val: &T) {
+    pub fn add_serde_entry<X: Into<i32>, T: Serialize>(&mut self,key: X, val: &T) {
         let as_str = serde_json::to_string(val).unwrap();
-        self.add_entry::<&str>(&as_str);
+        self.add_entry(key.into(),&as_str);
     }
 
 
     ///Finalize the schema and return the memory slice holding the whole vector
     pub fn finalize(&self) -> Vec<u8> {
         let mut var: Vec<u8> = Vec::with_capacity(self.data.len()+self.offsets.len()*20);
-        for val in self.offsets.iter() {
+        for (key,val) in self.offsets.iter() {
             MemBufferWriter::serialize_i32_to(val.pos.offset, &mut var);
             MemBufferWriter::serialize_i32_to(val.pos.length, &mut var);
             MemBufferWriter::serialize_i32_to(val.variable_type, &mut var);
+            MemBufferWriter::serialize_i32_to(*key, &mut var);
         }
         MemBufferWriter::serialize_i32_to(0x7AFECAFE, &mut var);
         var.extend_from_slice(&self.data);
@@ -369,6 +378,34 @@ mod tests {
         frequency: i32,
         id: i32,
     }
+
+    enum MyPossibilities {
+        BookTitle,
+        BookContent,
+        BookPostings,
+    }
+
+    impl From<MyPossibilities> for i32 {
+       fn from(pos: MyPossibilities) -> i32 {
+           pos as i32
+       }
+    }
+
+    #[test]
+    fn check_enum_usage() {
+        let mut writer = MemBufferWriter::new();
+        writer.add_entry(MyPossibilities::BookTitle as i32, "Der moderne Prometheus");
+        writer.add_entry(MyPossibilities::BookContent as i32, "Dies hier ist nur ein Satz");
+        writer.add_entry::<i32,&[u64]>(MyPossibilities::BookPostings as i32, &vec![0,1,2,3,4,5]);
+
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+
+        let _: &str = reader.load_entry(MyPossibilities::BookTitle as i32).unwrap();
+        let _: &str = reader.load_entry(MyPossibilities::BookContent as i32).unwrap();
+        let _: &[u64] = reader.load_entry(MyPossibilities::BookPostings).unwrap();
+    }
     
     #[test]
     fn check_type_ids() {
@@ -386,28 +423,31 @@ mod tests {
         let str1 = "Hello World";
         let str2 = "Hello second World";
         let str3 = "визитной карточкой";
-        writer.add_entry(str1);
-        writer.add_entry(str2);
-        writer.add_entry(str3);
+        writer.add_entry(0,str1);
+        writer.add_entry(1,str2);
+        writer.add_entry(2,str3);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
         let positions = &reader.offsets;
 
         assert_eq!(positions.len(),3);
-        assert_eq!(positions[0].variable_type,MemBufferTypes::Text as i32);
-        assert_eq!(positions[0].pos.offset,0);
-        assert_eq!(positions[0].pos.length,str1.as_bytes().len() as i32);
+        let zero = positions.get(&0).unwrap();
+        assert_eq!(zero.variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(zero.pos.offset,0);
+        assert_eq!(zero.pos.length,str1.as_bytes().len() as i32);
 
-        assert_eq!(positions[1].variable_type,MemBufferTypes::Text as i32);
-        assert_eq!(positions[1].pos.offset,str1.as_bytes().len() as i32);
-        assert_eq!(positions[1].pos.length,str2.as_bytes().len() as i32);
+        let one = positions.get(&1).unwrap();
+        assert_eq!(one.variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(one.pos.offset,str1.as_bytes().len() as i32);
+        assert_eq!(one.pos.length,str2.as_bytes().len() as i32);
 
-        assert_eq!(positions[2].variable_type,MemBufferTypes::Text as i32);
-        assert_eq!(positions[2].pos.offset as usize,str1.as_bytes().len() + str2.as_bytes().len());
-        assert_eq!(positions[2].pos.length,str3.as_bytes().len() as i32);
+        let two = positions.get(&2).unwrap();
+        assert_eq!(two.variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(two.pos.offset as usize,str1.as_bytes().len() + str2.as_bytes().len());
+        assert_eq!(two.pos.length,str3.as_bytes().len() as i32);
 
-        assert_eq!(reader.load_entry::<&str>(2).unwrap(),str3);
+        assert_eq!(reader.load_entry::<i32,&str>(2).unwrap(),str3);
     }
 
     #[test]
@@ -419,7 +459,7 @@ mod tests {
             id: 200,
         };
         let mut writer = MemBufferWriter::new();
-        writer.add_serde_entry(&value);
+        writer.add_serde_entry(0,&value);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
@@ -434,35 +474,48 @@ mod tests {
     #[test]
     fn check_serialize_string_deserialize() {
         let mut writer = MemBufferWriter::new();
-        writer.add_entry("Earth");
+        writer.add_entry(0,"Earth");
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
-        assert_eq!(reader.load_entry::<&str>(0).unwrap(), "Earth");
+        assert_eq!(reader.load_entry::<i32,&str>(0).unwrap(), "Earth");
     }
 
     #[test]
     fn check_serialize_vecu8_deserialize() {
         let mut writer = MemBufferWriter::new();
         let some_bytes : Vec<u8> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
-        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(0,&some_bytes[..]);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
-        assert_eq!(reader.load_entry::<&[u8]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+        assert_eq!(reader.load_entry::<i32,&[u8]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+    }
+
+    #[test]
+    fn check_wrong_key() {
+        let mut writer = MemBufferWriter::new();
+        let some_bytes : Vec<u64> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
+        writer.add_entry(0,&some_bytes[..]);
+        writer.add_entry(1,&some_bytes[..]);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        assert_eq!(reader.load_entry::<i32,&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+        assert_eq!(reader.load_entry::<i32,&[u64]>(3).is_err(), true);
     }
 
     #[test]
     fn check_serialize_vecu64_deserialize() {
         let mut writer = MemBufferWriter::new();
         let some_bytes : Vec<u64> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
-        writer.add_entry(&some_bytes[..]);
-        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(0,&some_bytes[..]);
+        writer.add_entry(1,&some_bytes[..]);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
-        assert_eq!(reader.load_entry::<&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
-        assert_eq!(reader.load_entry::<&[u64]>(1).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+        assert_eq!(reader.load_entry::<i32,&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+        assert_eq!(reader.load_entry::<i32,&[u64]>(1).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
     }
 
 
@@ -470,9 +523,9 @@ mod tests {
     fn check_len() {
         let mut writer = MemBufferWriter::new();
         let some_bytes : Vec<u64> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
-        writer.add_entry(&some_bytes[..]);
-        writer.add_entry(&some_bytes[..]);
-        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(0,&some_bytes[..]);
+        writer.add_entry(1,&some_bytes[..]);
+        writer.add_entry(2,&some_bytes[..]);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
@@ -485,6 +538,8 @@ mod tests {
         let result = writer.finalize();
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.len(), 0);
+        assert_eq!("Found memory buffer with payload size 0",format!("{:?}",reader));
+
     }
 
     #[test]
@@ -493,6 +548,7 @@ mod tests {
         let result = writer.finalize();
         let reader = MemBufferReader::new(&result[0..1]);
         assert_eq!(reader.is_err(),true);
+        println!("Error: {}",reader.unwrap_err());
     }
 
 
@@ -500,9 +556,9 @@ mod tests {
     fn check_payload_len() {
         let mut writer = MemBufferWriter::new();
         let some_bytes = "Hello how are you?";
-        writer.add_entry(&some_bytes[..]);
-        writer.add_entry(&some_bytes[..]);
-        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(0,&some_bytes[..]);
+        writer.add_entry(1,&some_bytes[..]);
+        writer.add_entry(2,&some_bytes[..]);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
@@ -513,23 +569,23 @@ mod tests {
     fn check_recursive_readers() {
         let mut writer = MemBufferWriter::new();
         let some_bytes = "Hello how are you?";
-        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(0,&some_bytes[..]);
 
         let mut writer2 = MemBufferWriter::new();
-        writer2.add_entry(some_bytes);
+        writer2.add_entry(0,some_bytes);
 
-        writer.add_entry(writer2);
+        writer.add_entry(1,writer2);
         let result = writer.finalize();
         assert_eq!(writer.finalize(), result);
 
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.len(), 2);
-        assert_eq!(reader.load_entry::<&str>(0).unwrap(), "Hello how are you?");
+        assert_eq!(reader.load_entry::<i32,&str>(0).unwrap(), "Hello how are you?");
         let second = reader.load_recursive_reader(1);
         assert_eq!(second.is_err(),false);
         let reader2 = second.unwrap();
         assert_eq!(reader2.len(), 1);
-        assert_eq!(reader2.load_entry::<&str>(0).unwrap(), "Hello how are you?");
+        assert_eq!(reader2.load_entry::<i32,&str>(0).unwrap(), "Hello how are you?");
 
         assert_eq!(reader.load_recursive_reader(0).is_err(),true);
     }
@@ -537,7 +593,7 @@ mod tests {
     #[test]
     fn check_mem_shift() {
         let mut writer = MemBufferWriter::new();
-        writer.add_entry("Earth");
+        writer.add_entry(0,"Earth");
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result[1..]);
@@ -547,18 +603,16 @@ mod tests {
     #[test]
     fn check_type_error() {
         let mut writer = MemBufferWriter::new();
-        writer.add_entry("Earth");
+        writer.add_entry(0,"Earth");
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result);
         assert_eq!(reader.is_err(),false);
-        let err = reader.unwrap().load_entry::<i32>(0).unwrap_err();
-        match err {
-            MemBufferError::FieldTypeError(x,y) => {
+        let err = reader.unwrap().load_entry::<i32,i32>(0).unwrap_err();
+        if let MemBufferError::FieldTypeError(x,y) = err {
+                println!("Error {} ",MemBufferError::FieldTypeError(x,y));
                 assert_eq!(x, MemBufferTypes::Text as i32);
                 assert_eq!(y, MemBufferTypes::Integer32 as i32);
-            },
-            _ => assert_eq!(false,true,"Wrong error returned must be FieldTypeError")
         }
     }
 
@@ -566,11 +620,11 @@ mod tests {
     #[test]
     fn check_serialize_i32_deserialize() {
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(100);
+        writer.add_entry(0,100);
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result).unwrap();
-        assert_eq!(reader.load_entry::<i32>(0).unwrap(), 100);
+        assert_eq!(reader.load_entry::<i32,i32>(0).unwrap(), 100);
     }
 }
 
@@ -589,12 +643,12 @@ mod bench {
             huge_string.push('a');
         }
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(&huge_string);
+        writer.add_entry(0,&huge_string);
         let result = writer.finalize();
 
         b.iter(|| {
             let reader = MemBufferReader::new(&result).unwrap();
-            let string = reader.load_entry::<&str>(0).unwrap();
+            let string = reader.load_entry::<i32,&str>(0).unwrap();
             assert_eq!(string.len(), 1_000_000);
         });
     }
@@ -606,12 +660,12 @@ mod bench {
             huge_string.push('a');
         }
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(&huge_string);
+        writer.add_entry(0,&huge_string);
         let result = writer.finalize();
 
         b.iter(|| {
             let reader = MemBufferReader::new(&result).unwrap();
-            let string = reader.load_entry::<&str>(0).unwrap();
+            let string = reader.load_entry::<i32,&str>(0).unwrap();
             assert_eq!(string.len(), 10_000_000);
         });
     }
@@ -623,12 +677,12 @@ mod bench {
             huge_string.push('a');
         }
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(&huge_string);
+        writer.add_entry(0,&huge_string);
         let result = writer.finalize();
 
         b.iter(|| {
             let reader = MemBufferReader::new(&result).unwrap();
-            let string = reader.load_entry::<&str>(0).unwrap();
+            let string = reader.load_entry::<i32,&str>(0).unwrap();
             assert_eq!(string.len(), 100_000_000);
         });
     }
@@ -640,17 +694,17 @@ mod bench {
             huge_string.push('a');
         }
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(&huge_string);
-        writer.add_entry(&huge_string);
-        writer.add_entry(&huge_string);
+        writer.add_entry(0,&huge_string);
+        writer.add_entry(1,&huge_string);
+        writer.add_entry(2,&huge_string);
         let result = writer.finalize();
         assert!(result.len() > 3_000_000);
 
         b.iter(|| {
             let reader = MemBufferReader::new(&result).unwrap();
-            let string1 = reader.load_entry::<&str>(0).unwrap();
-            let string2 = reader.load_entry::<&str>(1).unwrap();
-            let string3 = reader.load_entry::<&str>(2).unwrap();
+            let string1 = reader.load_entry::<i32,&str>(0).unwrap();
+            let string2 = reader.load_entry::<i32,&str>(1).unwrap();
+            let string3 = reader.load_entry::<i32,&str>(2).unwrap();
             assert_eq!(string1.len(), 1_000_000);
             assert_eq!(string2.len(), 1_000_000);
             assert_eq!(string3.len(), 1_000_000);
@@ -664,17 +718,17 @@ mod bench {
             huge_string.push('a');
         }
         let mut writer = MemBufferWriter::new();
-        writer.add_entry(&huge_string);
-        writer.add_entry(&huge_string);
-        writer.add_entry(&huge_string);
+        writer.add_entry(0,&huge_string);
+        writer.add_entry(1,&huge_string);
+        writer.add_entry(2,&huge_string);
         let result = writer.finalize();
         assert!(result.len() > 300_000_000);
 
         b.iter(|| {
             let reader = MemBufferReader::new(&result).unwrap();
-            let string1 = reader.load_entry::<&str>(0).unwrap();
-            let string2 = reader.load_entry::<&str>(1).unwrap();
-            let string3 = reader.load_entry::<&str>(2).unwrap();
+            let string1 = reader.load_entry::<i32,&str>(0).unwrap();
+            let string2 = reader.load_entry::<i32,&str>(1).unwrap();
+            let string3 = reader.load_entry::<i32,&str>(2).unwrap();
             assert_eq!(string1.len(), 100_000_000);
             assert_eq!(string2.len(), 100_000_000);
             assert_eq!(string3.len(), 100_000_000);
