@@ -8,13 +8,9 @@ jobs:
     steps:
       - name:                   Checkout repository
         uses:                   actions/checkout@v2
-      - name:                   Install coverage tool
+      - name:                   Install coverage tool and run coverage
         run: |
           docker run --security-opt seccomp=unconfined -v "${PWD}:/volume" xd009642/tarpaulin
-
-      - name:                   Generate code coverage 
-        run: |
-          cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
 
       - name:                   Upload to codecov.io
         uses:                   codecov/codecov-action@v1
