@@ -20,21 +20,21 @@ A rust library for rapid deserialization of huge datasets with few keys. The lib
 use membuffer::{MemBufferWriter,MemBufferReader,MemBufferError};
 
 fn main() {
-  //Creates a new empty MemBufferWriter
   let mut writer = MemBufferWriter::new();
-  
-  //Adds this as immutable field, no more changing after adding it
-  writer.add_string_entry("short_key","short_value");
+  //Add a vector with some numbers
+  let some_bytes : Vec<u64> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
 
-  //Creates a Vec<u8> out of all the collected data
+  //Write the entry into the memory buffer, this is immutable after writing no changing after this
+  writer.add_entry(&some_bytes[..]);
+  
+  //Create a Vec<u8> out of all the data
   let result = writer.finalize();
 
-  //Try to read the created vector. Will return an error if the CRC32 does not fit
-  //or if the header is not terminated. Will panic if the memory is corrupted beyond recognition
+  //Read the data back in again
   let reader = MemBufferReader::new(&result).unwrap();
 
-  //Will return an error if the selected key could not be found or if the value types dont match
-  assert_eq!(reader.get_string_field("short_key").unwrap(), "short_value");
+  //Tell the function the type to enable type checking will return err if the type is not right
+  assert_eq!(reader.load_entry::<&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
 }
 ```
 
@@ -52,18 +52,26 @@ struct HeavyStruct {
 }
 
 fn main() {
+  //Create a serde structure
   let value = HeavyStruct {
-      vec: vec![100,20,1],
-      name: String::from("membuffer!"),
-      frequency: 10,
-      id: 200,
+vec: vec![100,20,1],
+     name: String::from("membuffer!"),
+     frequency: 10,
+     id: 200,
   };
+
+  //Write the data into the memory buffer
   let mut writer = MemBufferWriter::new();
-  writer.add_serde_entry("heavy", &value);
+  writer.add_serde_entry(&value);
+
+  //Create an Vec<u8> out of the data
   let result = writer.finalize();
 
+  //Load the entry again
   let reader = MemBufferReader::new(&result).unwrap();
-  let struc: HeavyStruct = reader.get_serde_field("heavy").unwrap();
+
+  //Specify the type for serde to do the type checking, internally the serde object is saved as JSON string representation
+  let struc: HeavyStruct = reader.load_serde_entry(0).unwrap();
 
   assert_eq!(struc.vec, vec![100,20,1]);
   assert_eq!(struc.name,"membuffer!");
@@ -78,36 +86,43 @@ Why is the library this fast? The benchmark consists of deserializing a data str
 
 **Benchmark code:**
 ```rust
+//Nighlty only feature! Run on the nightly version
+#![feature(test)]
+use test::Bencher;
+use membuffer::{MemBufferWriter,MemBufferReader};
+use serde::{Serialize,Deserialize};
+use serde_json;
+
+
 #[bench]
 fn benchmark_few_keys_payload_1mb_times_3(b: &mut Bencher) {
-  let mut huge_string = String::with_capacity(10_000_000);
+  let mut huge_string = String::with_capacity(1_000_000);
   for _ in 0..1_000_000 {
     huge_string.push('a');
   }
   let mut writer = MemBufferWriter::new();
-  writer.add_string_entry("one",&huge_string);
-  writer.add_string_entry("two",&huge_string);
-  writer.add_string_entry("three",&huge_string);
+  writer.add_entry(&huge_string);
+  writer.add_entry(&huge_string);
+  writer.add_entry(&huge_string);
   let result = writer.finalize();
   assert!(result.len() > 3_000_000);
 
   b.iter(|| {
       let reader = MemBufferReader::new(&result).unwrap();
-      let string1 = reader.get_string_field("one").unwrap();
-      let string2 = reader.get_string_field("two").unwrap();
-      let string3 = reader.get_string_field("three").unwrap();
+      let string1 = reader.load_entry::<&str>(0).unwrap();
+      let string2 = reader.load_entry::<&str>(1).unwrap();
+      let string3 = reader.load_entry::<&str>(2).unwrap();
       assert_eq!(string1.len(), 1_000_000);
       assert_eq!(string2.len(), 1_000_000);
       assert_eq!(string3.len(), 1_000_000);
-      });
+      });   
 }
-
 
 #[derive(Serialize,Deserialize)]
 struct BenchSerde<'a> {
-    one: &'a str,
-    two: &'a str,
-    three: &'a str
+one: &'a str,
+       two: &'a str,
+       three: &'a str
 }
 
 #[bench]

@@ -36,12 +36,23 @@ use std::borrow::Cow;
 ///}
 ///```
 
-///Refers to a position of a datafield
+///Refers to a position given to every deserialize and serialize operation, can be used to store
+///data if one does not need to store data in the payload e. g. Field smaller than 8 Bytes
 pub struct Position {
     pub offset: i32,
     pub length: i32,
 }
 
+
+///Refers to the different types when implementing your own types use an own enum like
+///this:
+///```rust
+///use membuffer::MemBufferTypes;
+///enum MyImplementedTypes {
+/// MyOwnType0 = MemBufferTypes::LastPreDefienedValue as isize,
+/// MyOwnType1,
+/// MyOwnType2
+///}
 #[derive(Debug)]
 pub enum MemBufferTypes {
     Text,
@@ -121,7 +132,20 @@ impl<'a> MemBufferDeserialize<'a,MemBufferReader<'a>> for MemBufferReader<'a> {
     }
 }
 
-///The reader which is used for reading the memory area produced by the writer
+///The reader which is used for reading the memory area produced by the writer, **Important notice:
+///The reader uses the native endian of the system used therefore sending between big endian and
+///little endian systems wont work**
+///```rust
+///use membuffer::{MemBufferWriter,MemBufferReader};
+///
+///let mut data = MemBufferWriter::new();
+///data.add_entry("Add some data to save to file or send over the network");
+///let data_vec = data.finalize();
+/////The reader is type sensitive
+///let reader = MemBufferReader::new(&data_vec).unwrap();
+/////We load the first entry, try not to get this mixed up
+///assert_eq!(reader.load_entry::<&str>(0).unwrap(),"Add some data to save to file or send over the network");
+///```
 pub struct MemBufferReader<'a> {
     offsets: Vec<InternPosition>,
     data: &'a [u8]
@@ -129,7 +153,7 @@ pub struct MemBufferReader<'a> {
 
 impl<'a> MemBufferReader<'a> {
     ///Deserialize data from a buffer to an i32 integer
-    fn deserialize_i32_from(mut buffer: &[u8]) -> i32 {
+    pub fn deserialize_i32_from(mut buffer: &[u8]) -> i32 {
         buffer.read_i32::<NativeEndian>().unwrap()
     }
 
@@ -171,7 +195,7 @@ impl<'a> MemBufferReader<'a> {
         let mut current_slice = &val[..];
         let mut offsets: Vec<InternPosition> = Vec::new();
 
-        if val.len() < 16 {
+        if val.len() < 4 {
             return Err(MemBufferError::WrongFormat);
         }
 
@@ -219,15 +243,13 @@ pub struct MemBufferWriter {
 }
 
 pub trait MemBufferSerialize {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position,std::borrow::Cow<'a,[u8]>);
+    fn to_mem_buffer<'a>(&'a self, pos: &mut Position) -> std::borrow::Cow<'a,[u8]>;
     fn get_mem_buffer_type() -> i32; 
 }
 
 impl MemBufferSerialize for &str {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, std::borrow::Cow<'a,[u8]>) {
-        (Position {
-            offset,
-            length: self.len() as i32},std::borrow::Cow::Borrowed(self.as_bytes()))
+    fn to_mem_buffer<'a>(&'a self, _ : &mut Position) -> std::borrow::Cow<'a,[u8]> {
+        std::borrow::Cow::Borrowed(self.as_bytes())
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -236,10 +258,8 @@ impl MemBufferSerialize for &str {
 }
 
 impl MemBufferSerialize for &String {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position,Cow<'a,[u8]>) {
-        (Position {
-            offset,
-            length: self.len() as i32},Cow::Borrowed(self.as_bytes()))
+    fn to_mem_buffer<'a>(&'a self, _ : &mut Position) -> Cow<'a,[u8]> {
+        Cow::Borrowed(self.as_bytes())
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -248,10 +268,9 @@ impl MemBufferSerialize for &String {
 }
 
 impl MemBufferSerialize for i32 {
-    fn to_mem_buffer<'a>(&'a self, _: i32) -> (Position, Cow<'a, [u8]>) {
-        (Position {
-            offset: *self,
-            length: 0},Cow::Borrowed(&[]))
+    fn to_mem_buffer<'a>(&'a self, pos: &mut Position) -> Cow<'a, [u8]> {
+        pos.offset = *self;
+        Cow::Borrowed(&[])
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -260,10 +279,8 @@ impl MemBufferSerialize for i32 {
 }
 
 impl MemBufferSerialize for &[u8] {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a, [u8]>) {
-        (Position {
-            offset,
-            length: self.len() as i32},Cow::Borrowed(self))
+    fn to_mem_buffer<'a>(&'a self, _: &mut Position) -> Cow<'a, [u8]> {
+        Cow::Borrowed(self)
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -272,15 +289,11 @@ impl MemBufferSerialize for &[u8] {
 }
 
 impl MemBufferSerialize for &[u64] {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a,[u8]>) {
+    fn to_mem_buffer<'a>(&'a self, _: &mut Position) -> Cow<'a,[u8]> {
         let val: *const u64 = self.as_ptr();
         let cast_memory = val.cast::<u8>();
         let mem_length = self.len() * std::mem::size_of::<u64>();
-        println!("Memory length: {}",mem_length);
-
-        (Position {
-            offset,
-            length: mem_length as i32},Cow::Borrowed(unsafe{ std::slice::from_raw_parts(cast_memory, mem_length)}))
+        Cow::Borrowed(unsafe{ std::slice::from_raw_parts(cast_memory, mem_length)})
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -290,11 +303,9 @@ impl MemBufferSerialize for &[u64] {
 
 
 impl MemBufferSerialize for MemBufferWriter {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a,[u8]>) {
+    fn to_mem_buffer<'a>(&'a self, _ : &mut Position) -> Cow<'a,[u8]> {
         let ret = self.finalize();
-        (Position {
-            offset,
-            length: ret.len() as i32},Cow::Owned(ret))
+        Cow::Owned(ret)
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -312,13 +323,15 @@ impl MemBufferWriter {
     }
 
     ///Serializes the integer to the memory slice
-    fn serialize_i32_to(val: i32, to: &mut Vec<u8>) {
+    pub fn serialize_i32_to(val: i32, to: &mut Vec<u8>) {
         to.write_i32::<NativeEndian>(val).unwrap();
     }
 
     pub fn add_entry<T: MemBufferSerialize>(&mut self, val: T) {
-        let (pos,slice) = val.to_mem_buffer(self.data.len() as i32);
-        self.offsets.push(InternPosition{pos,variable_type: T::get_mem_buffer_type()});
+        let mut position = Position {offset: self.data.len() as i32, length: 0};
+        let slice = val.to_mem_buffer(&mut position);
+        position.length = slice.len() as i32;
+        self.offsets.push(InternPosition{pos:position,variable_type: T::get_mem_buffer_type()});
         self.data.extend_from_slice(&slice);
     }
 
@@ -346,7 +359,7 @@ impl MemBufferWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemBufferWriter,MemBufferReader,MemBufferError,MemBufferTypes};
+    use super::{MemBufferWriter,MemBufferReader,MemBufferError,MemBufferTypes,MemBufferSerialize};
     use serde::{Serialize,Deserialize};
 
     #[derive(Serialize,Deserialize)]
@@ -357,6 +370,16 @@ mod tests {
         id: i32,
     }
     
+    #[test]
+    fn check_type_ids() {
+        assert_eq!(<&str as MemBufferSerialize>::get_mem_buffer_type(),MemBufferTypes::Text as i32);
+        assert_eq!(<&String as MemBufferSerialize>::get_mem_buffer_type(),MemBufferTypes::Text as i32);
+        assert_eq!(<i32 as MemBufferSerialize>::get_mem_buffer_type(),MemBufferTypes::Integer32 as i32);
+        assert_eq!(<&[u8] as MemBufferSerialize>::get_mem_buffer_type(),MemBufferTypes::VectorU8 as i32);
+        assert_eq!(<&[u64] as MemBufferSerialize>::get_mem_buffer_type(),MemBufferTypes::VectorU64 as i32);
+        assert_eq!(MemBufferWriter::get_mem_buffer_type(),MemBufferTypes::MemBuffer as i32);
+    }
+
     #[test]
     fn check_serde_capability() {
         let value = HeavyStruct {
@@ -412,6 +435,7 @@ mod tests {
         assert_eq!(reader.load_entry::<&[u64]>(1).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
     }
 
+
     #[test]
     fn check_len() {
         let mut writer = MemBufferWriter::new();
@@ -424,6 +448,23 @@ mod tests {
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.len(), 3);
     }
+
+    #[test]
+    fn check_empty() {
+        let writer = MemBufferWriter::new();
+        let result = writer.finalize();
+        let reader = MemBufferReader::new(&result).unwrap();
+        assert_eq!(reader.len(), 0);
+    }
+
+    #[test]
+    fn check_slice_too_small() {
+        let writer = MemBufferWriter::new();
+        let result = writer.finalize();
+        let reader = MemBufferReader::new(&result[0..1]);
+        assert_eq!(reader.is_err(),true);
+    }
+
 
     #[test]
     fn check_payload_len() {
@@ -449,6 +490,7 @@ mod tests {
 
         writer.add_entry(writer2);
         let result = writer.finalize();
+        assert_eq!(writer.finalize(), result);
 
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.len(), 2);
@@ -458,6 +500,8 @@ mod tests {
         let reader2 = second.unwrap();
         assert_eq!(reader2.len(), 1);
         assert_eq!(reader2.load_entry::<&str>(0).unwrap(), "Hello how are you?");
+
+        assert_eq!(reader.load_recursive_reader(0).is_err(),true);
     }
 
     #[test]
