@@ -13,6 +13,10 @@ A rust library for rapid deserialization of huge datasets with few keys. The lib
 - Saving huge datasets with few keys on disk
 - For MMAPed Data structures as the fields does not get read until requested and therefore won't cause Page Faults
 
+**Reasons not to use:**
+- When reading all fields in the serialized data structure this crate will be only marginally faster than serde_json and is not as safe
+- When using a big amount of keys and reading most of them, this library will bring almost no benefit in seralizing and deserializing
+
 
 # Examples
 
