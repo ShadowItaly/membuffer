@@ -1,5 +1,7 @@
 [![Build](https://github.com/ShadowItaly/membuffer/workflows/Build/badge.svg)](https://github.com/ShadowItaly/membuffer/actions)
 [![value](https://img.shields.io/crates/v/membuffer)](https://crates.io/crates/membuffer)
+[![codecov](https://codecov.io/gh/ShadowItaly/membuffer/branch/main/graph/badge.svg?token=H1xcM8Umr6)](https://codecov.io/gh/ShadowItaly/membuffer)
+[![docs](https://docs.rs/membuffer/badge.svg)](https://docs.rs/membuffer)
 
 # membuffer
 A rust library for rapid deserialization of huge datasets with few keys. The library is meant to be used with mmaped files, almost any crate on crates.io which does serialization and deserialization needs to process the whole structure. This makes it unusable with large memory mapped files. For this purpose this library only scans the header to get the schema of the datastructure and leaves all other fields untouched unless it is specifically asked to fetch them.

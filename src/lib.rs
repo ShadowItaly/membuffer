@@ -42,6 +42,7 @@ pub struct Position {
     pub length: i32,
 }
 
+#[derive(Debug)]
 pub enum MemBufferTypes {
     Text,
     Integer32,
@@ -345,7 +346,7 @@ impl MemBufferWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemBufferWriter,MemBufferReader};
+    use super::{MemBufferWriter,MemBufferReader,MemBufferError,MemBufferTypes};
     use serde::{Serialize,Deserialize};
 
     #[derive(Serialize,Deserialize)]
@@ -467,6 +468,24 @@ mod tests {
 
         let reader = MemBufferReader::new(&result[1..]);
         assert_eq!(reader.is_err(),true);
+    }
+
+    #[test]
+    fn check_type_error() {
+        let mut writer = MemBufferWriter::new();
+        writer.add_entry("Earth");
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result);
+        assert_eq!(reader.is_err(),false);
+        let err = reader.unwrap().load_entry::<i32>(0).unwrap_err();
+        match err {
+            MemBufferError::FieldTypeError(x,y) => {
+                assert_eq!(x, MemBufferTypes::Text as i32);
+                assert_eq!(y, MemBufferTypes::Integer32 as i32);
+            },
+            _ => assert_eq!(false,true,"Wrong error returned must be FieldTypeError")
+        }
     }
 
 
