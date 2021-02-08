@@ -7,6 +7,7 @@ extern crate test;
 use byteorder::{WriteBytesExt, ReadBytesExt, NativeEndian};
 use serde::{Serialize,Deserialize};
 use serde_json;
+use std::borrow::Cow;
 
 
 ///!This crate will provide a extremely fast deserialization of dynamic data structures with big
@@ -46,6 +47,7 @@ pub enum MemBufferTypes {
     Integer32,
     VectorU8,
     VectorU64,
+    MemBuffer,
     LastPreDefienedValue
 }
 
@@ -111,6 +113,13 @@ impl<'a> MemBufferDeserialize<'a,&'a [u64]> for &[u64] {
     }
 }
 
+impl<'a> MemBufferDeserialize<'a,MemBufferReader<'a>> for MemBufferReader<'a> {
+    fn from_mem_buffer(pos: &Position, mem: &'a [u8]) -> Result<MemBufferReader<'a>,MemBufferError> {
+        let reader = MemBufferReader::new(&mem[pos.offset as usize..(pos.offset+pos.length) as usize])?;
+        Ok(reader)
+    }
+}
+
 ///The reader which is used for reading the memory area produced by the writer
 pub struct MemBufferReader<'a> {
     offsets: Vec<InternPosition>,
@@ -143,6 +152,15 @@ impl<'a> MemBufferReader<'a> {
     pub fn load_serde_entry<T: Deserialize<'a>>(&self,index: usize) -> Result<T,MemBufferError> {
         let string = self.load_entry::<&str>(index)?;
         Ok(serde_json::from_str(string).unwrap())
+    }
+
+    pub fn load_recursive_reader(&self, index: usize) -> Result<MemBufferReader<'a>,MemBufferError> {
+        let expected_type = MemBufferWriter::get_mem_buffer_type();
+        let is_type = self.offsets[index].variable_type;
+        if is_type != expected_type {
+            return Err(MemBufferError::FieldTypeError(is_type,expected_type));
+        }
+        MemBufferReader::from_mem_buffer(&self.offsets[index].pos, self.data)
     }
 
 
@@ -200,15 +218,15 @@ pub struct MemBufferWriter {
 }
 
 pub trait MemBufferSerialize {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position,&'a [u8]);
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position,std::borrow::Cow<'a,[u8]>);
     fn get_mem_buffer_type() -> i32; 
 }
 
 impl MemBufferSerialize for &str {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, &'a [u8]) {
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, std::borrow::Cow<'a,[u8]>) {
         (Position {
             offset,
-            length: self.len() as i32},self.as_bytes())
+            length: self.len() as i32},std::borrow::Cow::Borrowed(self.as_bytes()))
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -217,10 +235,10 @@ impl MemBufferSerialize for &str {
 }
 
 impl MemBufferSerialize for &String {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, &'a [u8]) {
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position,Cow<'a,[u8]>) {
         (Position {
             offset,
-            length: self.len() as i32},self.as_bytes())
+            length: self.len() as i32},Cow::Borrowed(self.as_bytes()))
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -229,10 +247,10 @@ impl MemBufferSerialize for &String {
 }
 
 impl MemBufferSerialize for i32 {
-    fn to_mem_buffer<'a>(&'a self, _: i32) -> (Position, &'a [u8]) {
+    fn to_mem_buffer<'a>(&'a self, _: i32) -> (Position, Cow<'a, [u8]>) {
         (Position {
             offset: *self,
-            length: 0},&[])
+            length: 0},Cow::Borrowed(&[]))
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -241,10 +259,10 @@ impl MemBufferSerialize for i32 {
 }
 
 impl MemBufferSerialize for &[u8] {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, &'a [u8]) {
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a, [u8]>) {
         (Position {
             offset,
-            length: self.len() as i32},self)
+            length: self.len() as i32},Cow::Borrowed(self))
     }
 
     fn get_mem_buffer_type() -> i32 {
@@ -253,7 +271,7 @@ impl MemBufferSerialize for &[u8] {
 }
 
 impl MemBufferSerialize for &[u64] {
-    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, &'a [u8]) {
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a,[u8]>) {
         let val: *const u64 = self.as_ptr();
         let cast_memory = val.cast::<u8>();
         let mem_length = self.len() * std::mem::size_of::<u64>();
@@ -261,11 +279,25 @@ impl MemBufferSerialize for &[u64] {
 
         (Position {
             offset,
-            length: mem_length as i32},unsafe{ std::slice::from_raw_parts(cast_memory, mem_length)})
+            length: mem_length as i32},Cow::Borrowed(unsafe{ std::slice::from_raw_parts(cast_memory, mem_length)}))
     }
 
     fn get_mem_buffer_type() -> i32 {
         MemBufferTypes::VectorU64 as i32
+    }
+}
+
+
+impl MemBufferSerialize for MemBufferWriter {
+    fn to_mem_buffer<'a>(&'a self, offset: i32) -> (Position, Cow<'a,[u8]>) {
+        let ret = self.finalize();
+        (Position {
+            offset,
+            length: ret.len() as i32},Cow::Owned(ret))
+    }
+
+    fn get_mem_buffer_type() -> i32 {
+        MemBufferTypes::MemBuffer as i32
     }
 }
 
@@ -286,7 +318,7 @@ impl MemBufferWriter {
     pub fn add_entry<T: MemBufferSerialize>(&mut self, val: T) {
         let (pos,slice) = val.to_mem_buffer(self.data.len() as i32);
         self.offsets.push(InternPosition{pos,variable_type: T::get_mem_buffer_type()});
-        self.data.extend_from_slice(slice);
+        self.data.extend_from_slice(&slice);
     }
 
     pub fn add_serde_entry<T: Serialize>(&mut self, val: &T) {
@@ -403,6 +435,28 @@ mod tests {
 
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.payload_len(), some_bytes.as_bytes().len()*3);
+    }
+
+    #[test]
+    fn check_recursive_readers() {
+        let mut writer = MemBufferWriter::new();
+        let some_bytes = "Hello how are you?";
+        writer.add_entry(&some_bytes[..]);
+
+        let mut writer2 = MemBufferWriter::new();
+        writer2.add_entry(some_bytes);
+
+        writer.add_entry(writer2);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        assert_eq!(reader.len(), 2);
+        assert_eq!(reader.load_entry::<&str>(0).unwrap(), "Hello how are you?");
+        let second = reader.load_recursive_reader(1);
+        assert_eq!(second.is_err(),false);
+        let reader2 = second.unwrap();
+        assert_eq!(reader2.len(), 1);
+        assert_eq!(reader2.load_entry::<&str>(0).unwrap(), "Hello how are you?");
     }
 
     #[test]
