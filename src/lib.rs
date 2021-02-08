@@ -41,6 +41,14 @@ pub struct Position {
     pub length: i32,
 }
 
+pub enum MemBufferTypes {
+    Text,
+    Integer32,
+    VectorU8,
+    VectorU64,
+    LastPreDefienedValue
+}
+
 struct InternPosition {
     pub pos: Position,
     pub variable_type: i32,
@@ -204,7 +212,7 @@ impl MemBufferSerialize for &str {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        0
+        MemBufferTypes::Text as i32
     }
 }
 
@@ -216,7 +224,7 @@ impl MemBufferSerialize for &String {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        0
+        MemBufferTypes::Text as i32
     }
 }
 
@@ -228,7 +236,7 @@ impl MemBufferSerialize for i32 {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        1 
+        MemBufferTypes::Integer32 as i32
     }
 }
 
@@ -240,7 +248,7 @@ impl MemBufferSerialize for &[u8] {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        2
+        MemBufferTypes::VectorU8 as i32
     }
 }
 
@@ -257,7 +265,7 @@ impl MemBufferSerialize for &[u64] {
     }
 
     fn get_mem_buffer_type() -> i32 {
-        3
+        MemBufferTypes::VectorU64 as i32
     }
 }
 
@@ -305,7 +313,7 @@ impl MemBufferWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemBufferWriter,MemBufferReader,MemBufferError};
+    use super::{MemBufferWriter,MemBufferReader};
     use serde::{Serialize,Deserialize};
 
     #[derive(Serialize,Deserialize)]
@@ -369,6 +377,32 @@ mod tests {
         let reader = MemBufferReader::new(&result).unwrap();
         assert_eq!(reader.load_entry::<&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
         assert_eq!(reader.load_entry::<&[u64]>(1).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+    }
+
+    #[test]
+    fn check_len() {
+        let mut writer = MemBufferWriter::new();
+        let some_bytes : Vec<u64> = vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10];
+        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(&some_bytes[..]);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        assert_eq!(reader.len(), 3);
+    }
+
+    #[test]
+    fn check_payload_len() {
+        let mut writer = MemBufferWriter::new();
+        let some_bytes = "Hello how are you?";
+        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(&some_bytes[..]);
+        writer.add_entry(&some_bytes[..]);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        assert_eq!(reader.payload_len(), some_bytes.as_bytes().len()*3);
     }
 
     #[test]
