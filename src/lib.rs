@@ -381,6 +381,36 @@ mod tests {
     }
 
     #[test]
+    fn check_read_attributes() {
+        let mut writer = MemBufferWriter::new();
+        let str1 = "Hello World";
+        let str2 = "Hello second World";
+        let str3 = "визитной карточкой";
+        writer.add_entry(str1);
+        writer.add_entry(str2);
+        writer.add_entry(str3);
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+        let positions = &reader.offsets;
+
+        assert_eq!(positions.len(),3);
+        assert_eq!(positions[0].variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(positions[0].pos.offset,0);
+        assert_eq!(positions[0].pos.length,str1.as_bytes().len() as i32);
+
+        assert_eq!(positions[1].variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(positions[1].pos.offset,str1.as_bytes().len() as i32);
+        assert_eq!(positions[1].pos.length,str2.as_bytes().len() as i32);
+
+        assert_eq!(positions[2].variable_type,MemBufferTypes::Text as i32);
+        assert_eq!(positions[2].pos.offset as usize,str1.as_bytes().len() + str2.as_bytes().len());
+        assert_eq!(positions[2].pos.length,str3.as_bytes().len() as i32);
+
+        assert_eq!(reader.load_entry::<&str>(2).unwrap(),str3);
+    }
+
+    #[test]
     fn check_serde_capability() {
         let value = HeavyStruct {
             vec: vec![100,20,1],
