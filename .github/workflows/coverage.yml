@@ -10,8 +10,11 @@ jobs:
         uses:                   actions/checkout@v2
       - name:                   Install coverage tool
         run: |
-            cargo install cargo-tarpaulin
+              cargo install cargo-tarpaulin
       - name:                   Run coverage
         run: |
-        cargo tarpaulin --out Xml
-        bash <(curl -s https://codecov.io/bash) -X gcov
+              cargo tarpaulin --out Xml
+
+      - name:                   Upload coverage
+        run: |
+              bash <(curl -s https://codecov.io/bash) -X gcov
