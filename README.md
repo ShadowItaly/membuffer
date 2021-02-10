@@ -7,10 +7,11 @@
 A rust library for rapid deserialization of huge datasets with few keys. The library is meant to be used with mmaped files, almost any crate on crates.io which does serialization and deserialization needs to process the whole structure. This makes it unusable with large memory mapped files. For this purpose this library only scans the header to get the schema of the datastructure and leaves all other fields untouched unless it is specifically asked to fetch them.
 
 <span style='color: red'>
-**Warning: This library uses memory transmutation and pointer arithmetic to improve performance and
+```diff
+- Warning: This library uses memory transmutation and pointer arithmetic to improve performance and
 prevent unnecessary parsing. Therefore the code is heavily tested. Do not exchange buffer created with this library between Little and
-Big Endian Systems, it won't work!**
-</span>
+Big Endian Systems, it won't work!
+```
 
 **This data structure is optimized for deserialization, it does not parse the fields and therefore is extremely fast when deserializing big strings/Vectors**
 
