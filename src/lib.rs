@@ -102,12 +102,15 @@ pub trait MemBufferDeserialize<'a,T> {
 
 impl<'a> MemBufferDeserialize<'a,&'a str> for &str {
     fn from_mem_buffer(pos: &Position, mem: &'a [u8]) -> Result<&'a str,MemBufferError> {
+        //This should always be safe as long as the saved string was utf-8 encoded and no one
+        //messed with the file on disk.
         unsafe{ Ok(std::str::from_utf8_unchecked(&mem[pos.offset as usize..(pos.offset+pos.length) as usize])) }
     }
 }
 
 impl<'a> MemBufferDeserialize<'a,i32> for i32 {
     fn from_mem_buffer(pos: &Position, _: &'a [u8]) -> Result<i32,MemBufferError> {
+        //Fast load integer since no memory is required to store integer
         Ok(pos.offset)
     }
 }
@@ -125,6 +128,7 @@ impl<'a> MemBufferDeserialize<'a,&'a [u64]> for &[u64] {
         //Divide by eight as u64 should be 8 bytes on any system
         let mem_length = pos.length>>3;
 
+        //This should always be safe as long as no one messed with the serialized data
         Ok(unsafe{std::slice::from_raw_parts(cast_memory, mem_length as usize)})
     }
 }
@@ -169,6 +173,8 @@ impl<'a> MemBufferReader<'a> {
         self.data.len()
     }
     
+    ///Internal load function this is needed to enable loading nested MemBufferWriters which does
+    ///not implement the Deserialize trait
     fn intern_load_entry<X: MemBufferDeserialize<'a,X>>(&self, key: usize, expected_type: i32) -> Result<X,MemBufferError> {
         let entry = &self.offsets[key];
         let is_type = entry.variable_type;
@@ -178,15 +184,20 @@ impl<'a> MemBufferReader<'a> {
         return X::from_mem_buffer(&entry.pos, self.data);
     }
 
+    ///Load one entry with the given type, expecting the serializable trait as well to determine
+    ///the integer type, when doing polymorphismus of structures use the same integer for multiple
+    ///types
     pub fn load_entry<X: MemBufferDeserialize<'a,X> + MemBufferSerialize>(&self,key: usize) -> Result<X,MemBufferError> {
         self.intern_load_entry(key.into(), X::get_mem_buffer_type())
     }
 
+    ///Loads an entry stored with serde_json and returns it.
     pub fn load_serde_entry<T: Deserialize<'a>>(&self,key: usize) -> Result<T,MemBufferError> {
         let string : &str = self.load_entry(key.into())?;
         Ok(serde_json::from_str(string).unwrap())
     }
 
+    ///Loads a nested MembufferWriter as reader
     pub fn load_recursive_reader(&self, key: usize) -> Result<MemBufferReader<'a>,MemBufferError> {
         self.intern_load_entry(key.into(), MemBufferWriter::get_mem_buffer_type())
     }
@@ -311,11 +322,56 @@ impl MemBufferWriter {
         }
     }
 
+    ///Create a new Membuffer writer from the given memory, this will enable the writer to add
+    ///more data to the previous version, to do so the writer does a full reload of the memory
+    ///therefore it is an expensive operation if the structure adding fields to is huge.
+    ///```rust
+    ///use membuffer::{MemBufferWriter,MemBufferReader};
+    ///
+    ///let mut value = MemBufferWriter::new();
+    ///value.add_entry("Hello");
+    ///value.add_entry("World");
+    ///
+    ///let data = value.finalize();
+    ///
+    /////Save data to disk or anything like that
+    /////Then load it again and add more data by doing this
+    ///
+    ///let mut writer_adder = MemBufferWriter::from(&data).unwrap();
+    /////The writer creates a new Vector to hold the data therefore no mutable reference to data is
+    /////stored
+    ///writer_adder.add_entry("Damn I forgot");
+    ///
+    ///let new_data = writer_adder.finalize();
+    /////new_data will now contain an entry for "Hello" an entry for "World" and an entry
+    /////for "Damn I forgot" 
+    ///
+    ///```
+    pub fn from<'a>(raw_memory: &'a [u8]) -> Result<MemBufferWriter,MemBufferError> {
+        let reader = MemBufferReader::new(raw_memory)?;
+        let mut offsets : Vec<InternPosition> = Vec::new();
+        for x in reader.offsets.iter() {
+            offsets.push(InternPosition{
+                pos: Position {
+                    offset: x.pos.offset,
+                    length: x.pos.length,
+                },
+                variable_type: x.variable_type
+            });
+        }
+
+        Ok(MemBufferWriter {
+            offsets,
+            data: reader.data.to_vec()
+        })
+    }
+
     ///Serializes the integer to the memory slice
     pub fn serialize_i32_to(val: i32, to: &mut Vec<u8>) {
         to.write_i32::<NativeEndian>(val).unwrap();
     }
 
+    ///Adds an entry to the writer the only requirement is the serializable trait
     pub fn add_entry<T: MemBufferSerialize>(&mut self, val: T) {
         let mut position = Position {offset: self.data.len() as i32, length: 0};
         let slice = val.to_mem_buffer(&mut position);
@@ -324,6 +380,8 @@ impl MemBufferWriter {
         self.data.extend_from_slice(&slice);
     }
 
+    ///Adds a serde serializable entry into the structure as serializer serde_json is used.
+    ///Internally it is saved as a string.
     pub fn add_serde_entry<T: Serialize>(&mut self,val: &T) {
         let as_str = serde_json::to_string(val).unwrap();
         self.add_entry(&as_str);
@@ -489,6 +547,27 @@ mod tests {
         assert_eq!(reader.load_entry::<&[u64]>(0).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
         //TODO check index overflow
         assert_eq!(reader.load_entry::<&[u64]>(3).unwrap(), vec![100,200,100,200,1,2,3,4,5,6,7,8,9,10]);
+    }
+
+    #[test]
+    fn check_reload_writer_from_mem() {
+        let mut writer = MemBufferWriter::new();
+        let str1 = "Hello World";
+        let str2 = "Hello second World";
+        let str3 = "визитной карточкой";
+        writer.add_entry(str1);
+        writer.add_entry(str2);
+        writer.add_entry(str3);
+        let result = writer.finalize();
+
+        let mut writer2 = MemBufferWriter::from(&result).unwrap();
+        writer2.add_entry("fuchs");
+        
+        let added2 = writer2.finalize();
+        let reader = MemBufferReader::new(&added2).unwrap();
+        assert_eq!(reader.len(),4);
+        assert_eq!(reader.load_entry::<&str>(3).unwrap(),"fuchs");
+        assert_eq!(reader.load_entry::<&str>(2).unwrap(),"визитной карточкой");
     }
 
     #[test]
