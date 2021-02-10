@@ -4,10 +4,10 @@
 [![docs](https://docs.rs/membuffer/badge.svg)](https://docs.rs/membuffer)
 
 # Table of contents
-[1. Membuffer](#Membuffer)
-[2. Benchmark](#Benchmark)
-[3. Examples](#Examples)
-[4. Benchmark Code](#Benchmark-code)
+1. [Membuffer](#Membuffer)
+2. [Benchmark](#Benchmark)
+3. [Examples](#Examples)
+4. [Benchmark Code](#Benchmark-code)
 
 
 
@@ -17,7 +17,7 @@
 A rust library for rapid deserialization of huge datasets with few keys. The library is meant to be used with mmaped files, almost any crate on crates.io which does serialization and deserialization needs to process the whole structure. This makes it unusable with large memory mapped files. For this purpose this library only scans the header to get the schema of the datastructure and leaves all other fields untouched unless it is specifically asked to fetch them.
 
 **Warning: This library uses memory transmutation and pointer arithmetic to improve performance and
-prevent unnecessary parsing. Therefore the code is heavily tested. Do not exchange buffer created with this library between Little and
+prevent unnecessary parsing. Even though the code is heavily tested one must careful consider if one needs to use this library. Do not exchange buffer created with this library between Little and
 Big Endian Systems, it won't work!**
 
 # Benchmark
