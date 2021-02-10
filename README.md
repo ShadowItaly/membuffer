@@ -2,6 +2,7 @@
 [![value](https://img.shields.io/crates/v/membuffer)](https://crates.io/crates/membuffer)
 [![codecov](https://codecov.io/gh/ShadowItaly/membuffer/branch/main/graph/badge.svg?token=H1xcM8Umr6)](https://codecov.io/gh/ShadowItaly/membuffer)
 [![docs](https://docs.rs/membuffer/badge.svg)](https://docs.rs/membuffer)
+![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)
 
 # Table of contents
 1. [Membuffer](#Membuffer)
