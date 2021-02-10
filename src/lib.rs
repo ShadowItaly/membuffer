@@ -60,6 +60,7 @@ pub enum MemBufferTypes {
     Text,
     Integer32,
     VectorU8,
+    VectorU32,
     VectorU64,
     MemBuffer,
     LastPreDefienedValue
@@ -127,6 +128,18 @@ impl<'a> MemBufferDeserialize<'a,&'a [u64]> for &[u64] {
         let cast_memory = val.cast::<u64>();
         //Divide by eight as u64 should be 8 bytes on any system
         let mem_length = pos.length>>3;
+
+        //This should always be safe as long as no one messed with the serialized data
+        Ok(unsafe{std::slice::from_raw_parts(cast_memory, mem_length as usize)})
+    }
+}
+
+impl<'a> MemBufferDeserialize<'a,&'a [u32]> for &[u32] {
+    fn from_mem_buffer(pos: &Position, mem: &'a [u8]) -> Result<&'a [u32],MemBufferError> {
+        let val: *const u8 = mem[pos.offset as usize..].as_ptr();
+        let cast_memory = val.cast::<u32>();
+        //Divide by four as u32 should be 4 bytes on any system
+        let mem_length = pos.length>>2;
 
         //This should always be safe as long as no one messed with the serialized data
         Ok(unsafe{std::slice::from_raw_parts(cast_memory, mem_length as usize)})
@@ -301,6 +314,19 @@ impl MemBufferSerialize for &[u64] {
     }
 }
 
+impl MemBufferSerialize for &[u32] {
+    fn to_mem_buffer<'a>(&'a self, _: &mut Position) -> Cow<'a,[u8]> {
+        let val: *const u32 = self.as_ptr();
+        let cast_memory = val.cast::<u8>();
+        let mem_length = self.len() * std::mem::size_of::<u32>();
+        Cow::Borrowed(unsafe{ std::slice::from_raw_parts(cast_memory, mem_length)})
+    }
+
+    fn get_mem_buffer_type() -> i32 {
+        MemBufferTypes::VectorU32.into()
+    }
+}
+
 
 impl MemBufferSerialize for MemBufferWriter {
     fn to_mem_buffer<'a>(&'a self, _ : &mut Position) -> Cow<'a,[u8]> {
@@ -351,7 +377,7 @@ impl MemBufferWriter {
         let reader = MemBufferReader::new(raw_memory)?;
         let mut offsets : Vec<InternPosition> = Vec::new();
         for x in reader.offsets.iter() {
-            offsets.push(InternPosition{
+            offsets.push(InternPosition {
                 pos: Position {
                     offset: x.pos.offset,
                     length: x.pos.length,
@@ -432,6 +458,19 @@ mod tests {
         let _: &str = reader.load_entry(0).unwrap();
         let _: &str = reader.load_entry(1).unwrap();
         let _: &[u64] = reader.load_entry(2).unwrap();
+    }
+
+    #[test]
+    fn check_vec32() {
+        let mut writer = MemBufferWriter::new();
+        writer.add_entry::<&[u32]>(&vec![0,1,2,3,4,5]);
+
+        let result = writer.finalize();
+
+        let reader = MemBufferReader::new(&result).unwrap();
+
+        let val: &[u32] = reader.load_entry(0).unwrap();
+        assert_eq!(vec![0,1,2,3,4,5],val);
     }
     
     #[test]
