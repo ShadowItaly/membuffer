@@ -3,16 +3,29 @@
 [![codecov](https://codecov.io/gh/ShadowItaly/membuffer/branch/main/graph/badge.svg?token=H1xcM8Umr6)](https://codecov.io/gh/ShadowItaly/membuffer)
 [![docs](https://docs.rs/membuffer/badge.svg)](https://docs.rs/membuffer)
 
-# membuffer
+# Table of contents
+[1. Membuffer](#Membuffer)
+[2. Benchmark](#Benchmark)
+[3. Examples](#Examples)
+[4. Benchmark Code](#Benchmark-code)
+
+
+
+
+
+# Membuffer
 A rust library for rapid deserialization of huge datasets with few keys. The library is meant to be used with mmaped files, almost any crate on crates.io which does serialization and deserialization needs to process the whole structure. This makes it unusable with large memory mapped files. For this purpose this library only scans the header to get the schema of the datastructure and leaves all other fields untouched unless it is specifically asked to fetch them.
 
-```diff
-- Warning: This library uses memory transmutation and pointer arithmetic to improve performance and
+**Warning: This library uses memory transmutation and pointer arithmetic to improve performance and
 prevent unnecessary parsing. Therefore the code is heavily tested. Do not exchange buffer created with this library between Little and
-Big Endian Systems, it won't work!
-```
+Big Endian Systems, it won't work!**
 
-**This data structure is optimized for deserialization, it does not parse the fields and therefore is extremely fast when deserializing big strings/Vectors**
+# Benchmark
+![Benchmark](assets/benchmark.png)
+Why is the library this fast? The benchmark consists of deserializing a data structure with different payload sizes either 1 MB, 10 MB or 100 MB. The membuffer load only the data structure layout and returns a slice to the strings instead of parsing the whole structure. This will help heaps if one uses MMAPed structures for example. As one can see in the benchmarks the speed of membuffer is only dependent on the number of keys and not of the size of the datastructure deserialized which is a good proof that the complexity of the deserialization does not depend on the size of the datastructure.
+
+
+
 
 **Use cases:**
 - Handling structures with big fields as it is lazily parsed
@@ -90,11 +103,7 @@ vec: vec![100,20,1],
 }
 ```
 
-# Benchmark
-![Benchmark](assets/benchmark.png)
-Why is the library this fast? The benchmark consists of deserializing a data structure with different payload sizes either 1 MB, 10 MB or 100 MB. The membuffer load only the data structure layout and returns a slice to the strings instead of parsing the whole structure. This will help heaps if one uses MMAPed structures for example. As one can see in the benchmarks the speed of membuffer is only dependent on the number of keys and not of the size of the datastructure deserialized which is a good proof that the complexity of the deserialization does not depend on the size of the datastructure.
-
-**Benchmark code:**
+# Benchmark code
 ```rust
 //Nighlty only feature! Run on the nightly version
 #![feature(test)]
