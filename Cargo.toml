@@ -1,6 +1,6 @@
 [package]
 name = "membuffer"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Alexander Leonhardt <equinox.salexander@gmail.com>"]
 edition = "2018"
 description = "A very fast flat memory buffer used to deserialize at a fast speed"
