@@ -6,7 +6,7 @@ extern crate test;
 
 use byteorder::{WriteBytesExt, ReadBytesExt, NativeEndian};
 use serde::{Serialize,Deserialize};
-use serde_json;
+use bincode;
 use std::borrow::Cow;
 
 
@@ -206,8 +206,8 @@ impl<'a> MemBufferReader<'a> {
 
     ///Loads an entry stored with serde_json and returns it.
     pub fn load_serde_entry<T: Deserialize<'a>>(&self,key: usize) -> Result<T,MemBufferError> {
-        let string : &str = self.load_entry(key.into())?;
-        Ok(serde_json::from_str(string).unwrap())
+        let data: &[u8] = self.load_entry(key.into())?;
+        Ok(bincode::deserialize(data).unwrap())
     }
 
     ///Loads a nested MembufferWriter as reader
@@ -409,8 +409,8 @@ impl MemBufferWriter {
     ///Adds a serde serializable entry into the structure as serializer serde_json is used.
     ///Internally it is saved as a string.
     pub fn add_serde_entry<T: Serialize>(&mut self,val: &T) {
-        let as_str = serde_json::to_string(val).unwrap();
-        self.add_entry(&as_str);
+        let as_str = bincode::serialize(val).unwrap();
+        self.add_entry(&as_str[..]);
     }
 
 
@@ -737,7 +737,7 @@ mod bench {
     use test::Bencher;
     use super::{MemBufferWriter,MemBufferReader};
     use serde::{Serialize,Deserialize};
-    use serde_json;
+    use bincode;
 
 
     #[bench]
@@ -858,10 +858,10 @@ mod bench {
             three: &huge_string
         };
 
-        let string = serde_json::to_string(&first).unwrap();
+        let string = bincode::serialize(&first).unwrap();
 
         b.iter(|| {
-            let reader: BenchSerde = serde_json::from_str(&string).unwrap();
+            let reader: BenchSerde = bincode::deserialize(&string).unwrap();
             assert_eq!(reader.one.len(), 1_000_000);
             assert_eq!(reader.two.len(), 1_000_000);
             assert_eq!(reader.three.len(), 1_000_000);
