@@ -404,6 +404,13 @@ impl MemBufferWriter {
         self.types[index] = T::get_mem_buffer_type();
     }
 
+    pub fn load_entry<'a, T: MemBufferDeserialize<'a,T>+MemBufferSerialize>(&'a mut self, index: usize) -> Result<T,MemBufferError> {
+        if T::get_mem_buffer_type() != self.types[index] {
+            return Err(MemBufferError::FieldTypeError(self.types[index],T::get_mem_buffer_type()));
+        }
+        return T::from_mem_buffer(&self.data[index]);
+    }
+
     ///Adds a serde serializable entry into the structure as serializer serde_json is used.
     ///Internally it is saved as a string.
     pub fn add_serde_entry<T: Serialize>(&mut self,val: &T) {
@@ -724,6 +731,15 @@ mod tests {
     fn check_type_error() {
         let mut writer = MemBufferWriter::new();
         writer.add_entry("Earth");
+
+        assert_eq!(writer.load_entry::<&str>(0).unwrap(),"Earth");
+        let error = writer.load_entry::<i32>(0).unwrap_err();
+        if let MemBufferError::FieldTypeError(x,y) = error {
+                assert_eq!(x, MemBufferTypes::Text as i32);
+                assert_eq!(y, MemBufferTypes::Integer32 as i32);
+        }
+ 
+
         let result = writer.finalize();
 
         let reader = MemBufferReader::new(&result);
