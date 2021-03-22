@@ -116,6 +116,13 @@ impl<'a> MemBufferDeserialize<'a,i32> for i32 {
     }
 }
 
+impl<'a> MemBufferDeserialize<'a,u64> for u64 {
+    fn from_mem_buffer(mem: &'a [u8]) -> Result<u64,MemBufferError> {
+        //Fast load integer since no memory is required to store integer
+        Ok(NativeEndian::read_u64(mem))
+    }
+}
+
 impl<'a> MemBufferDeserialize<'a,&'a [u8]> for &[u8] {
     fn from_mem_buffer(mem: &'a [u8]) -> Result<&'a [u8],MemBufferError> {
         Ok(mem)
@@ -287,6 +294,17 @@ impl MemBufferSerialize for i32 {
 
     fn get_mem_buffer_type() -> i32 {
         MemBufferTypes::Integer32.into()
+    }
+}
+
+
+impl MemBufferSerialize for u64 {
+    fn to_mem_buffer<'a>(&'a self) -> Cow<'a, [u8]> {
+        Cow::Owned(unsafe{std::mem::transmute::<u64,[u8;8]>(*self)}.to_vec())
+    }
+
+    fn get_mem_buffer_type() -> i32 {
+        1021
     }
 }
 
