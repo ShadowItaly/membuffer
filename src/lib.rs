@@ -231,19 +231,16 @@ impl<'a> MemBufferReader<'a> {
         }
 
         let vec_len = MemBufferReader::deserialize_i32_from(val) as usize;
-        let start = vec_len*std::mem::size_of::<InternPosition>()+4;
-        if val.len() < start+4 {
+        let checksum = MemBufferReader::deserialize_i32_from(&val[4..]) as usize;
+        let start = vec_len*std::mem::size_of::<InternPosition>()+8;
+        if val.len() < start || std::num::Wrapping(checksum)+std::num::Wrapping(0x7AFECAFE) != std::num::Wrapping(vec_len) {
             return Err(MemBufferError::WrongFormat);
         }
 
-        let magic = MemBufferReader::deserialize_i32_from(&val[start..]);
-        if magic != 0x7AFECAFE {
-            return Err(MemBufferError::WrongFormat);
-        }
         unsafe {
         Ok(MemBufferReader {
-            offsets: std::slice::from_raw_parts(val[4..].as_ptr().cast::<InternPosition>(),vec_len),
-            data: &val[start+4..]
+            offsets: std::slice::from_raw_parts(val[8..].as_ptr().cast::<InternPosition>(),vec_len),
+            data: &val[start..]
         })
         }
     }
@@ -441,6 +438,7 @@ impl MemBufferWriter {
     pub fn finalize(&self) -> Vec<u8> {
         let mut var: Vec<u8> = Vec::with_capacity(10_000_000);
         MemBufferWriter::serialize_i32_to(self.types.len() as i32,&mut var);
+        MemBufferWriter::serialize_i32_to((std::num::Wrapping(self.types.len() as i32)-std::num::Wrapping(0x7AFECAFE as i32)).0,&mut var);
         let mut offset = 0;
         for val in 0..self.types.len() {
             MemBufferWriter::serialize_i32_to(offset as i32, &mut var);
@@ -448,7 +446,6 @@ impl MemBufferWriter {
             MemBufferWriter::serialize_i32_to(self.types[val], &mut var);
             offset+=self.data[val].len();
         }
-        MemBufferWriter::serialize_i32_to(0x7AFECAFE, &mut var);
         for x in self.data.iter() {
             var.extend_from_slice(x);
         }
