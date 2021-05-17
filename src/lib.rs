@@ -426,6 +426,10 @@ impl MemBufferWriter {
         return T::from_mem_buffer(&self.data[index]);
     }
 
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
+
     ///Adds a serde serializable entry into the structure as serializer serde_json is used.
     ///Internally it is saved as a string.
     pub fn add_serde_entry<T: Serialize>(&mut self,val: &T) {
