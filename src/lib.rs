@@ -419,7 +419,7 @@ impl MemBufferWriter {
         self.types[index] = T::get_mem_buffer_type();
     }
 
-    pub fn load_entry<'a, T: MemBufferDeserialize<'a,T>+MemBufferSerialize>(&'a mut self, index: usize) -> Result<T,MemBufferError> {
+    pub fn load_entry<'a, T: MemBufferDeserialize<'a,T>+MemBufferSerialize>(&'a self, index: usize) -> Result<T,MemBufferError> {
         if T::get_mem_buffer_type() != self.types[index] {
             return Err(MemBufferError::FieldTypeError(self.types[index],T::get_mem_buffer_type()));
         }
